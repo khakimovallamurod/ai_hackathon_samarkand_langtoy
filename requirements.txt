@@ -1,0 +1,6 @@
+ultralytics
+Flask
+python-telegram-bot
+python-dotenv
+supervision
+gTTS
