@@ -9,6 +9,13 @@ import time
 import asyncio
 import config
 import text_to_speach
+import websocket
+import threading
+import json
+
+ESP32_WEBSOCKET_URL = "ws://192.168.4.1/ws"  
+ws_connection = None
+connection_lock = threading.Lock()
 
 DANGEROUS_OBJECTS = [
     'knife', 'scissors', 'bottle', 'wine glass', 'oven', 'microwave',
@@ -23,15 +30,74 @@ MONITORED_CLASSES = ['person'] + DANGEROUS_OBJECTS + [
 
 DANGER_COLOR = Color(255, 0, 0)  
 PERSON_COLOR = Color(0, 255, 0)  
-KID_COLOR = Color(0, 255, 0)  
+KID_COLOR = Color(191, 27, 224)
 SAFE_OBJECT_COLOR = Color(15, 219, 209)
 
+def connect_to_esp32():
+    global ws_connection
+    with connection_lock:
+        while True:
+            try:
+                print("ESP32 ga ulanishga harakat qilinmoqda...")
+                ws_connection = websocket.create_connection(ESP32_WEBSOCKET_URL, timeout=10)
+                print("ESP32 ga WebSocket orqali muvaffaqiyatli ulanildi!")
+                ws_connection.send("child_safety_monitor_connected")
+                break 
+            except Exception as e:
+                print(f"ESP32 ga ulanib bo'lmadi: {e}. 5 soniyadan so'ng qayta urinish.")
+                ws_connection = None
+                time.sleep(5)
+
+def send_to_esp32(message):
+    global ws_connection
+    with connection_lock:
+        if ws_connection and ws_connection.connected:
+            try:
+                if isinstance(message, dict):
+                    message = json.dumps(message)
+                ws_connection.send(message)
+                print(f"ESP32 ga yuborildi: {message}")
+            except Exception as e:
+                print(f"ESP32 ga yuborishda xato: {e}")
+                ws_connection = None
+                threading.Thread(target=connect_to_esp32, daemon=True).start()
+        elif not ws_connection:
+            print("ESP32 bilan aloqa yo'q. Qayta ulanishga harakat qilinmoqda...")
+            threading.Thread(target=connect_to_esp32, daemon=True).start()
+
+def send_safety_status(child_count, danger_count, dangers_list=None):
+    status_data = {
+        "type": "safety_status",
+        "child_count": child_count,
+        "danger_count": danger_count,
+        "timestamp": time.time()
+    }
+    if dangers_list:
+        status_data["dangers"] = [
+            {
+                "danger_class": danger["danger_class"],
+                "distance": int(danger["distance"]),
+                "person_id": danger["person_id"]
+            }
+            for danger in dangers_list[:3]  
+        ]
+    send_to_esp32(status_data)
+
+def send_movement_command(command, duration=2000):
+    move_data = {
+        "type": "movement",
+        "command": command,
+        "duration": duration,
+        "timestamp": time.time()
+    }
+    send_to_esp32(move_data)
+
 class Tracker:
-    def __init__(self, max_length=20):  
+    def __init__(self, max_length=20):
         self.trajectories = defaultdict(lambda: deque(maxlen=max_length))
         self.next_id = 1
         self.object_memory = {}
-        self.max_distance = 80 
+        self.max_distance = 80
     
     def update(self, detections):
         if len(detections.xyxy) == 0:
@@ -78,7 +144,8 @@ class DangerDetector:
         self.danger_threshold = danger_threshold
         self.alert_cooldown = alert_cooldown
         self.last_alerts = {}
-    
+        self.last_esp32_alert = 0
+        self.esp32_alert_cooldown = 3  
     def detect_person_danger_proximity(self, person_boxes, dangerous_detections):
         dangers = []
         current_time = time.time()
@@ -106,6 +173,17 @@ class DangerDetector:
                         })
                         
                         self.last_alerts[alert_key] = current_time
+        
+        if dangers and (current_time - self.last_esp32_alert > self.esp32_alert_cooldown):
+            send_safety_status(
+                child_count=len([p for p, _ in person_boxes]),
+                danger_count=len(dangers),
+                dangers_list=dangers
+            )
+            
+            if len(dangers) > 0:
+                send_movement_command("alert_mode", 3000) 
+            self.last_esp32_alert = current_time
         return dangers
     
     def get_box_center(self, box):
@@ -276,13 +354,11 @@ def annotate_frame(frame, main_model, kid_model, detections, trajectory_tracker,
             draw_text(annotated_frame, class_name, (x1, y1-10), color=SAFE_OBJECT_COLOR.as_bgr())
         
         annotated_frame = draw_simple_box(annotated_frame, x1, y1, x2, y2, color, 2)
-        
         draw_text(annotated_frame, f"ID:{tracker_id}", (x1, y2+15), font_scale=0.4)
-        last_alert_time = 0
-        current_time = time.time()
-        if confidence > 0.5 and class_name not in ['Kid', 'person'] and (current_time - last_alert_time > 30): 
+        
+        if confidence > 0.7 and class_name not in ['Kid', 'person']:
             text_to_speach.text_to_speach_by_lang(text=class_name, filename=f'{class_name}_{class_id}.mp3')
-            last_alert_time = current_time
+
     dangers = danger_detector.detect_person_danger_proximity(person_boxes, dangerous_detections)
     
     for danger in dangers:
@@ -299,8 +375,8 @@ def annotate_frame(frame, main_model, kid_model, detections, trajectory_tracker,
     
     return annotated_frame, child_count, dangers, dangerous_detections, safe_objects
 
-def create_simple_info_panel(frame, child_count, danger_count, safe_count, total_objects):
-    panel_height = 60
+def create_simple_info_panel(frame, child_count, danger_count, safe_count, total_objects, esp32_status):
+    panel_height = 80
     panel = np.zeros((panel_height, frame.shape[1], 3), dtype=np.uint8)
     
     stats = [
@@ -311,7 +387,11 @@ def create_simple_info_panel(frame, child_count, danger_count, safe_count, total
     ]
     
     for i, stat in enumerate(stats):
-        draw_text(panel, stat, (20 + i*150, 30), font_scale=0.5, color=(255, 255, 255))
+        draw_text(panel, stat, (20 + i*120, 25), font_scale=0.5, color=(255, 255, 255))
+    
+    esp32_color = (0, 255, 0) if esp32_status else (0, 0, 255)
+    esp32_text = "ESP32: Connected" if esp32_status else "ESP32: Disconnected"
+    draw_text(panel, esp32_text, (20, 50), font_scale=0.4, color=esp32_color)
     
     return panel
 
@@ -339,8 +419,10 @@ def get_class_ids(model, class_names):
 def main(camera_index, output_path=None, bot_token=None, chat_id=None):
     MAIN_MODEL_PATH = "models/yolo11n.pt"  
     KID_MODEL_PATH = "models/kid_model.pt"  
-    CONFIDENCE_THRESHOLD = 0.4 
+    CONFIDENCE_THRESHOLD = 0.4
     NMS_IOU_THRESHOLD = 0.5
+    
+    threading.Thread(target=connect_to_esp32, daemon=True).start()
     
     main_model, kid_model = load_models(MAIN_MODEL_PATH, KID_MODEL_PATH)
     
@@ -354,12 +436,16 @@ def main(camera_index, output_path=None, bot_token=None, chat_id=None):
     
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1) 
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    
     main_monitored_class_ids = get_class_ids(main_model, MONITORED_CLASSES)
-    kid_class_ids = get_class_ids(kid_model, ['Kid'])  
+    kid_class_ids = get_class_ids(kid_model, ['Kid'])
 
     frame_count = 0
     last_alert_time = 0
+    last_status_update = 0
+    process_every_n_frames = 2
+    
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -367,8 +453,17 @@ def main(camera_index, output_path=None, bot_token=None, chat_id=None):
             break
         
         frame_count += 1
+        current_time = time.time()
         
-        main_results = main_model(frame, imgsz=320, verbose=False, classes=main_monitored_class_ids)[0]  # imgsz kamaytirildi
+        if frame_count % process_every_n_frames != 0:
+            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            if ret:
+                frame_bytes = buffer.tobytes()
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            continue
+        
+        main_results = main_model(frame, imgsz=320, verbose=False, classes=main_monitored_class_ids)[0]
         main_detections = sv.Detections.from_ultralytics(main_results)
         main_detections = main_detections[main_detections.confidence > CONFIDENCE_THRESHOLD]
         main_detections = main_detections.with_nms(NMS_IOU_THRESHOLD)
@@ -392,18 +487,23 @@ def main(camera_index, output_path=None, bot_token=None, chat_id=None):
             frame, main_model, kid_model, merged_detections, trajectory_tracker, danger_detector
         )
         
+        esp32_connected = ws_connection is not None and ws_connection.connected
+        
+        if current_time - last_status_update > 10:
+            send_safety_status(child_count, len(dangerous_objects))
+            last_status_update = current_time
+        
         info_panel = create_simple_info_panel(
             annotated_frame, child_count, len(dangerous_objects), 
-            len(safe_objects), len(merged_detections))
+            len(safe_objects), len(merged_detections), esp32_connected)
         
         final_frame = np.vstack([annotated_frame, info_panel])
         
         if dangers:
             cv2.rectangle(final_frame, (0, 0), (final_frame.shape[1], 5), DANGER_COLOR.as_bgr(), -1)
-            draw_text(final_frame, "DANGER DETECTED!", (20, annotated_frame.shape[0] + 40), 
+            draw_text(final_frame, "DANGER DETECTED!", (20, annotated_frame.shape[0] + 60), 
                      font_scale=0.7, color=DANGER_COLOR.as_bgr())
             
-            current_time = time.time()
             if bot_token and chat_id and (current_time - last_alert_time > 30): 
                 alert_msg = f"⚠️ Xavfli holat!\nBolalar: {child_count}\nXavflar: {len(dangers)}"
                 
@@ -413,7 +513,7 @@ def main(camera_index, output_path=None, bot_token=None, chat_id=None):
                 asyncio.run(send_telegram_alert(bot_token, chat_id, alert_msg, alert_img_path))
                 last_alert_time = current_time
         
-        ret, buffer = cv2.imencode('.jpg', final_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])  # Sifat kamaytirildi
+        ret, buffer = cv2.imencode('.jpg', final_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
         if not ret:
             continue
         
