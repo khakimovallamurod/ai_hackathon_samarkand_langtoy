@@ -14,8 +14,8 @@ def get_chat_id():
     if chat_id is None :
         return "Not found CHAT ID"
     return chat_id
-def get_open_ai_key():
-    api_key = os.getenv('OPENAI_API_KEY')
+def get_api_key():
+    api_key = os.getenv('API_KEY')
 
     if api_key is None :
         return "Not found CHAT ID"
