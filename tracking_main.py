@@ -18,8 +18,8 @@ ws_connection = None
 connection_lock = threading.Lock()
 
 DANGEROUS_OBJECTS = [
-    'knife', 'scissors', 'bottle', 'wine glass', 'oven', 'microwave',
-    'sink', 'refrigerator', 'fire hydrant', 'motorcycle', 'car', 'train',
+    'knife', 'scissors', 'oven', 'microwave',
+    'fire hydrant', 'motorcycle', 'car', 'train',
     'bus', 'truck'
 ]
 
