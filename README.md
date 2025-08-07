@@ -64,6 +64,14 @@ Kamera indeksini sozlash uchun `main()` funksiyasidagi `camera_index` qiymatini 
 * Annotatsiyalangan video oqim oynada ko‘rsatiladi.
 
 ---
+```markdown
+# Result image
+
+Bu yerda ishlash jarayondan rasm:
+
+![Result rasmi](/results/photo_2025-08-07_18-57-57.jpg)
+```
+---
 
 Quyida `text_to_speach.py` ishga tushirish:
 
