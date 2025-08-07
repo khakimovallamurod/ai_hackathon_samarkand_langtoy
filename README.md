@@ -65,7 +65,7 @@ Kamera indeksini sozlash uchun `main()` funksiyasidagi `camera_index` qiymatini 
 
 ---
 
-```markdown
+```
 # Result image
 
 Bu yerda ishlash jarayondan rasm:
@@ -73,6 +73,7 @@ Bu yerda ishlash jarayondan rasm:
 ![Result rasmi](https://raw.githubusercontent.com/khakimovallamurod/ai_hackathon_samarkand_langtoy/main/results/photo_2025-08-07_18-57-57.jpg)
 ```
 
+---
 
 Quyida `text_to_speach.py` ishga tushirish:
 
