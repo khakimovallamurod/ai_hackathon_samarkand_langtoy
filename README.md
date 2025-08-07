@@ -5,7 +5,7 @@
 
 ```bash
 git clone https://github.com/khakimovallamurod/ai_hackathon_samarkand_langtoy
-cd child-safety-monitor
+cd ai_hackathon_samarkand_langtoy
 ```
 
 2. Virtual muhit yarating va faollashtiring (ixtiyoriy):
