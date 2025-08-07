@@ -69,7 +69,7 @@ Kamera indeksini sozlash uchun `main()` funksiyasidagi `camera_index` qiymatini 
 
 Bu yerda ishlash jarayondan rasm:
 
-![Result rasmi](results/photo_2025-08-07_18-57-57.jpg)
+![Result rasmi](https://github.com/khakimovallamurod/ai_hackathon_samarkand_langtoy/blob/main/results/photo_2025-08-07_18-57-57.jpg)
 ```
 ---
 
